@@ -51,22 +51,21 @@ def create_app():
             db.session.add(member)
             db.session.flush()  # get member.id
 
-# 2. Parse date of birth (be flexible with formats)
-dob_raw = data.get("date_of_birth", "").strip()
-if not dob_raw:
-    raise ValueError("Missing date_of_birth in payload")
+            # 2. Parse date of birth (be flexible with formats)
+            dob_raw = data.get("date_of_birth", "").strip()
+            if not dob_raw:
+                raise ValueError("Missing date_of_birth in payload")
 
-dob = None
-for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-    try:
-        dob = datetime.strptime(dob_raw, fmt).date()
-        break
-    except ValueError:
-        continue
+            dob = None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    dob = datetime.strptime(dob_raw, fmt).date()
+                    break
+                except ValueError:
+                    continue
 
-if dob is None:
-    raise ValueError(f"Unsupported date format: {dob_raw}")
-
+            if dob is None:
+                raise ValueError(f"Unsupported date format: {dob_raw}")
 
             # 3. Parse time of birth (optional)
             tob = None
