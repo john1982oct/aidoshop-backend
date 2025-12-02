@@ -57,7 +57,8 @@ def create_app():
                 raise ValueError("Missing date_of_birth in payload")
 
             dob = None
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            # Added %m/%d/%Y and %d-%b-%y to support formats like 12/13/2019 and 02-Oct-82
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d-%b-%y"):
                 try:
                     dob = datetime.strptime(dob_raw, fmt).date()
                     break
