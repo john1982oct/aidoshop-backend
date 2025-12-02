@@ -4,9 +4,11 @@ from models import db, Member, MemberBirthData, EnergyMap
 from utils_energy import get_sun_sign
 import os
 
+
 def create_app():
     app = Flask(__name__)
 
+    # DB config: Render will inject DATABASE_URL, otherwise fall back to local SQLite
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
         "DATABASE_URL",
         "sqlite:///aidoshop.db"
@@ -15,10 +17,19 @@ def create_app():
 
     db.init_app(app)
 
-    @app.before_first_request
-    def init_db():
-        # this runs on the first request in Render/gunicorn
-        db.create_all()
+    # ----------------- FLASK 3 SAFE DB INITIALISER -----------------
+    # before_first_request is removed in Flask 3, so we do a one-time
+    # init using before_request + flag.
+    app._db_initialized = False
+
+    @app.before_request
+    def initialize_database_once():
+        if not app._db_initialized:
+            with app.app_context():
+                db.create_all()
+            app._db_initialized = True
+            app.logger.info("Database tables created/verified on first request.")
+    # ----------------------------------------------------------------
 
     @app.route("/")
     def index():
@@ -30,7 +41,7 @@ def create_app():
         app.logger.info(f"Member intake payload: {data}")
 
         try:
-            # 1. Member
+            # 1. Create member
             member = Member(
                 full_name=data["full_name"],
                 email=data["email"],
@@ -40,9 +51,8 @@ def create_app():
             db.session.add(member)
             db.session.flush()  # get member.id
 
-            # 2. DOB parsing (be flexible with format)
+            # 2. Parse date of birth (be flexible with formats)
             dob_raw = data["date_of_birth"]
-
             dob = None
             for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
                 try:
@@ -50,14 +60,13 @@ def create_app():
                     break
                 except ValueError:
                     continue
-
             if dob is None:
                 raise ValueError(f"Unsupported date format: {dob_raw}")
 
+            # 3. Parse time of birth (optional)
             tob = None
             tob_raw = data.get("time_of_birth")
             if tob_raw:
-                # allow "HH:MM" or "HH:MM:SS"
                 for tfmt in ("%H:%M", "%H:%M:%S"):
                     try:
                         tob = datetime.strptime(tob_raw, tfmt).time()
@@ -65,6 +74,7 @@ def create_app():
                     except ValueError:
                         continue
 
+            # 4. Save birth data
             birth = MemberBirthData(
                 member_id=member.id,
                 date_of_birth=dob,
@@ -74,12 +84,12 @@ def create_app():
             )
             db.session.add(birth)
 
-            # 3. Simple energy map
+            # 5. Simple energy map
             energy_type = get_sun_sign(dob)
             energy = EnergyMap(
                 member_id=member.id,
                 energy_type=energy_type,
-                notes=f"Auto-generated: {energy_type}",
+                notes=f"Auto-generated based on {energy_type}",
             )
             db.session.add(energy)
 
