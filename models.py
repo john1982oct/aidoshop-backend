@@ -10,6 +10,7 @@ class Member(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     gender = db.Column(db.String(20))
     consent_to_emails = db.Column(db.Boolean, default=True)
+    focus_areas = db.Column(db.Text, nullable=True)  # NEW: e.g. "Career,Wealth"
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     birth_data = db.relationship("MemberBirthData", backref="member", uselist=False)
