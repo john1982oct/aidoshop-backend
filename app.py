@@ -8,14 +8,27 @@ import os
 def create_app():
     app = Flask(__name__)
 
-    # DB config: Render will inject DATABASE_URL, otherwise fall back to local SQLite
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-        "DATABASE_URL",
-        "sqlite:///aidoshop.db"
-    )
+    # ---------------------------------------------------------
+    # DATABASE CONFIG
+    # ---------------------------------------------------------
+    # 1) If DATABASE_URL is set (e.g. Postgres on Render), use that.
+    # 2) Otherwise, fall back to an SQLite file in /tmp (writable on Render).
+    db_url = os.environ.get("DATABASE_URL")
+
+    if not db_url:
+        # Use a writable temp location for SQLite (ephemeral but fine for testing)
+        sqlite_path = "/tmp/aidoshop.db"
+        db_url = f"sqlite:///{sqlite_path}"
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     db.init_app(app)
+
+    # Log which DB we are using
+    with app.app_context():
+        app.logger.info(f"SQLALCHEMY_DATABASE_URI in use: {db.engine.url}")
+        app.logger.info(f"DB file path (if sqlite): {getattr(db.engine.url, 'database', None)}")
 
     # ----------------- FLASK 3 SAFE DB INITIALISER -----------------
     # before_first_request is removed in Flask 3, so we do a one-time
@@ -41,46 +54,33 @@ def create_app():
         app.logger.info(f"Member intake payload: {data}")
 
         try:
-            # ---------------------------------------------------
-            # 0. CHECK IF EMAIL ALREADY EXISTS
-            # ---------------------------------------------------
-            existing = Member.query.filter_by(email=data["email"]).first()
-            if existing:
-                app.logger.info(f"Email already exists: {data['email']}")
-                return jsonify({
-                    "status": "exists",
-                    "message": "Email already registered",
-                    "member_id": existing.id
-                }), 200
-
-            # ---------------------------------------------------
-            # 1. Read focus_areas (string like "Career,Wealth")
-            # ---------------------------------------------------
-            focus_areas = data.get("focus_areas", "")
-
-            # ---------------------------------------------------
-            # 2. Create member (only if not exists)
-            # ---------------------------------------------------
+            # 1. Create member
             member = Member(
                 full_name=data["full_name"],
                 email=data["email"],
                 gender=data.get("gender"),
                 consent_to_emails=bool(data.get("consent_to_emails", True)),
-                focus_areas=focus_areas,
+                # focus_areas handled in a moment
             )
+
+            # Optional focus_areas: expect a string like "Career,Wealth"
+            focus_areas = data.get("focus_areas")
+            if isinstance(focus_areas, list):
+                # In case we ever send a list, join into a string
+                focus_areas = ",".join(focus_areas)
+            member.focus_areas = focus_areas
+
             db.session.add(member)
             db.session.flush()  # get member.id
 
-            # ---------------------------------------------------
-            # 3. Parse date of birth (be flexible with formats)
-            # ---------------------------------------------------
+            # 2. Parse date of birth (be flexible with formats)
             dob_raw = data.get("date_of_birth", "").strip()
             if not dob_raw:
                 raise ValueError("Missing date_of_birth in payload")
 
             dob = None
             # Added %m/%d/%Y and %d-%b-%y to support formats like 12/13/2019 and 02-Oct-82
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d-%b-%y", "%d-%b-%Y"):
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d-%b-%y"):
                 try:
                     dob = datetime.strptime(dob_raw, fmt).date()
                     break
@@ -90,9 +90,7 @@ def create_app():
             if dob is None:
                 raise ValueError(f"Unsupported date format: {dob_raw}")
 
-            # ---------------------------------------------------
-            # 4. Parse time of birth (optional)
-            # ---------------------------------------------------
+            # 3. Parse time of birth (optional)
             tob = None
             tob_raw = data.get("time_of_birth")
             if tob_raw:
@@ -103,9 +101,7 @@ def create_app():
                     except ValueError:
                         continue
 
-            # ---------------------------------------------------
-            # 5. Save birth data
-            # ---------------------------------------------------
+            # 4. Save birth data
             birth = MemberBirthData(
                 member_id=member.id,
                 date_of_birth=dob,
@@ -115,9 +111,7 @@ def create_app():
             )
             db.session.add(birth)
 
-            # ---------------------------------------------------
-            # 6. Simple energy map
-            # ---------------------------------------------------
+            # 5. Simple energy map
             energy_type = get_sun_sign(dob)
             energy = EnergyMap(
                 member_id=member.id,
